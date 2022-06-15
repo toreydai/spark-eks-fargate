@@ -1,0 +1,103 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: spark-eks-fargate
+  region: ap-northeast-2
+  version: "1.21"
+
+availabilityZones: ["ap-northeast-2a", "ap-northeast-2b"]
+
+vpc:
+  nat:
+    gateway: HighlyAvailable # other options: Disable, Single (default)
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+
+iam:
+  withOIDC: true
+  serviceAccounts:
+    - metadata:
+        name: cluster-autoscaler
+        namespace: kube-system
+        labels: {aws-usage: "cluster-ops"}
+      attachPolicy: # inline policy can be defined along with `attachPolicyARNs`
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - "autoscaling:DescribeAutoScalingGroups"
+              - "autoscaling:DescribeAutoScalingInstances"
+              - "autoscaling:DescribeLaunchConfigurations"
+              - "autoscaling:DescribeTags"
+              - "autoscaling:SetDesiredCapacity"
+              - "autoscaling:TerminateInstanceInAutoScalingGroup"
+              - "ec2:DescribeLaunchTemplateVersions"
+            Resource: '*'
+
+fargateProfiles:
+  - name: spark-fargate
+    selectors:
+      - namespace: spark-fargate
+        labels:
+          spark/component: executor
+
+managedNodeGroups:
+  # Nodegroup used to support tools like Kubedashboard, Cluster Autoscaler...
+  - name: tooling
+    instanceType: t3.large
+    minSize: 0
+    maxSize: 2
+    desiredCapacity: 1
+    volumeSize: 20
+    labels:
+      noderole: tooling
+    tags:
+      k8s.io/cluster-autoscaler/node-template/label/noderole: tooling
+      k8s.io/cluster-autoscaler/experiments: owned
+      k8s.io/cluster-autoscaler/enabled: "true"
+    iam:
+      withAddonPolicies:
+        ebs: true
+        fsx: true
+        efs: true
+        autoScaler: true
+        cloudWatch: true
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+nodeGroups:
+  # Nodegroup used to run Spark driver on x86 based nodes with on-demand
+  - name: spark-od-1a
+    availabilityZones: ["ap-northeast-2a"]
+    minSize: 0
+    maxSize: 1
+    privateNetworking: true
+    instanceType: "m5.large"
+    labels:
+      arch: x86
+      disk: none
+      noderole: spark
+    tags:
+      k8s.io/cluster-autoscaler/node-template/label/arch: x86
+      k8s.io/cluster-autoscaler/node-template/label/kubernetes.io/os: linux
+      k8s.io/cluster-autoscaler/node-template/label/noderole: spark
+      k8s.io/cluster-autoscaler/node-template/label/disk: none
+      k8s.io/cluster-autoscaler/node-template/label/node-lifecycle: on-demand
+      k8s.io/cluster-autoscaler/node-template/label/topology.kubernetes.io/zone: ap-northeast-2a
+      k8s.io/cluster-autoscaler/experiments: owned
+      k8s.io/cluster-autoscaler/enabled: "true"
+    iam:
+      withAddonPolicies:
+        ebs: true
+        fsx: true
+        efs: true
+        autoScaler: true
+        cloudWatch: true
+      attachPolicyARNs:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
